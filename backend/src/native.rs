@@ -371,7 +371,7 @@ fn session(
     let context = pw::context::ContextRc::new(&main_loop, None)?;
     let core = context.connect_rc(Some(pw::properties::properties! {
         "application.name" => "Advanced Audio Control",
-        "application.id" => "ssupt.audio-control",
+        "application.id" => "io.github.ol4vr.audio-control",
         "media.category" => "Manager"
     }))?;
     let registry = core.get_registry_rc()?;

@@ -42,7 +42,9 @@ impl Pipe {
                 return Err(io::Error::last_os_error());
             }
         }
-        Ok(Self(tokio::io::unix::AsyncFd::new(file)?))
+        // SAFETY: File exclusively owns the duplicated descriptor. The File
+        // is stored inside AsyncFd and remains open and unchanged until drop.
+        Ok(Self(unsafe { tokio::io::unix::AsyncFd::register(file)? }))
     }
     async fn read(&self, buffer: &mut [u8]) -> io::Result<usize> {
         use std::io::Read;

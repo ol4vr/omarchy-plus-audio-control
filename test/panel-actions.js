@@ -16,6 +16,7 @@ function panel() {
     audioStreams: [stream], recordingStreams: [], candidateSinks: [output], candidateSources: [input],
     displayAudioStreams: [stream], displayRecordingStreams: [],
     outputVolumeMaximum: 1, focusSection: 'output', selectedIndex: -1,
+    inputMutationsAllowed: true, inputProtectionMessage: '',
     hasOutput: true, hasInput: true, anyAudible: true,
     defaultOutputError: '', defaultInputError: '', streamRouteSetError: '', interactionError: '',
     defaultSetPending: false, pendingStreamRoute: null, streamOutputMenuOpen: false,

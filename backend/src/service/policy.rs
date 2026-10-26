@@ -82,6 +82,11 @@ impl Service {
         let _transaction = self.transaction().await?;
         let _lock = FileLock::mutation().await?;
         let _settings_lock = FileLock::settings().await?;
+        let _ptt = if crate::ptt::policy_requires_authority(&params.key) {
+            Some(crate::ptt::require_input_mutation().await?)
+        } else {
+            None
+        };
         let graph = native.snapshot();
         if !graph.ready || graph.generation != params.generation {
             return Err(Failure::new(

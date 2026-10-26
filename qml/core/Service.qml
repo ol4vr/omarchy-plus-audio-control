@@ -30,6 +30,9 @@ Item {
   property var ports: []
   property var outputs: ({})
   property var routes: ({ playback: {}, recording: {}, error: "" })
+  property string pttState: "unknown"
+  property string pttMessage: "Discord PTT ownership has not been verified"
+  readonly property bool inputMutationsAllowed: pttState === "disabled"
   readonly property bool busy: state.busy === true
   readonly property bool transactionBusy: busy
     && state.operation !== "node.audio" && state.operation !== "node.level"
@@ -91,6 +94,25 @@ Item {
     }
     return client.request(method, params || {}, callback, settings)
   }
+  function refreshPttState() {
+    if (!ready) {
+      pttState = "unknown"
+      pttMessage = "Audio service is unavailable"
+      return
+    }
+    request("ptt.status", {}, function(result, failure) {
+      if (failure || !result || (result.state !== "enabled" && result.state !== "disabled")) {
+        root.pttState = "unknown"
+        root.pttMessage = failure ? failure.message
+          : "Discord PTT ownership cannot be verified"
+        return
+      }
+      root.pttState = String(result.state)
+      root.pttMessage = root.pttState === "enabled"
+        ? "Discord PTT is enabled; microphone controls are disabled"
+        : ""
+    }, { mutating: false, timeout: 5000 })
+  }
   function identityForNode(node) {
     if (!ready || !state.graphReady || !node) return null
     var id = Model.nodeObjectId(node)
@@ -103,6 +125,11 @@ Item {
     return found ? { generation: state.generation, id: Number(id), serial: serial } : null
   }
   function changeNode(node, patch) {
+    if (!inputMutationsAllowed
+        && (Model.isAudioSource(node) || Model.isRecordingStream(node))) {
+      error = pttMessage
+      return false
+    }
     var identity = identityForNode(node)
     if (!identity) return false
     var params = { identity: identity }
@@ -135,7 +162,10 @@ Item {
         root.ready = value
         root.backendVersion = info ? String(info.version || "") : ""
         root.capabilities = info ? info.capabilities : []
-        if (value) root.error = ""
+        if (value) {
+          root.error = ""
+          root.refreshPttState()
+        }
       },
       state: function(value) {
         if (JSON.stringify(root.stores) !== JSON.stringify(value.stores || {})) root.stores = value.stores || {}
@@ -167,6 +197,32 @@ Item {
     if (client) client.reset(Protocol.failure("disconnected", "Audio plugin closed", false))
   }
   PwObjectTracker { objects: root.candidateRecordingStreams }
+
+  readonly property string pttStateHome: Quickshell.env("XDG_STATE_HOME") !== ""
+    ? Quickshell.env("XDG_STATE_HOME") : Quickshell.env("HOME") + "/.local/state"
+  FileView {
+    path: root.pttStateHome + "/omarchy-plus/discord-ptt/enabled"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: pttRefreshTimer.restart()
+    onLoaded: pttRefreshTimer.restart()
+    onLoadFailed: pttRefreshTimer.restart()
+  }
+  FileView {
+    path: root.pttStateHome + "/omarchy-plus/discord-ptt/authority-v1"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: pttRefreshTimer.restart()
+    onLoaded: pttRefreshTimer.restart()
+    onLoadFailed: pttRefreshTimer.restart()
+  }
+  Timer {
+    id: pttRefreshTimer
+    interval: 150
+    repeat: false
+    onTriggered: root.refreshPttState()
+  }
+  onQuickPanelOpened: refreshPttState()
 
   // Capture notifications are best-effort; probe once so a missing
   // notify-send never turns into repeated spawn failures.

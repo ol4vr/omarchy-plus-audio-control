@@ -14,6 +14,7 @@ CursorSurface {
   required property var options
   required property string currentValue
   required property bool menuEnabled
+  property bool targetEnabled: menuEnabled
   property color urgent: Commons.Color.urgent
   property string fontFamily: Style.font.family
   property bool menuReportedOpen: false
@@ -86,7 +87,7 @@ CursorSurface {
       value: root.currentValue
       options: root.options
       hasCursor: root.hasCursor && root.keyboardControl === 0
-      enabled: root.menuEnabled
+      enabled: root.menuEnabled && root.targetEnabled
       opacity: enabled ? 1 : 0.6
       foreground: root.foreground
       fontFamily: root.fontFamily
@@ -105,7 +106,7 @@ CursorSurface {
       hoverColor: root.urgent
       fontFamily: root.fontFamily
       bordered: true
-      enabled: root.enabled && root.menuEnabled
+      enabled: root.enabled && root.menuEnabled && root.targetEnabled
       hasCursor: root.hasCursor && root.keyboardControl === 1
       anchors.verticalCenter: parent.verticalCenter
       onClicked: root.deleted()

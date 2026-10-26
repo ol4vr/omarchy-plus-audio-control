@@ -166,6 +166,11 @@ impl Service {
         } else {
             None
         };
+        let _ptt = if crate::ptt::store_requires_authority(request) {
+            Some(crate::ptt::require_input_mutation().await?)
+        } else {
+            None
+        };
         self.set_busy(true);
         let _busy = Busy(self);
         let command = request.clone();

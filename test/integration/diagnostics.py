@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 
-from client import Client
+from client import Client, prepare_ptt_authority
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = Path(sys.argv[1]).resolve()
@@ -48,6 +48,7 @@ with tempfile.TemporaryDirectory(prefix='audio-diagnostics-') as temporary, Exit
                PULSE_SERVER='unix:'+str(work/'pulse/native'),
                DBUS_SESSION_BUS_ADDRESS='unix:path='+str(work/'unused-bus'),
                DBUS_SYSTEM_BUS_ADDRESS='unix:path='+str(work/'unused-bus'))
+    prepare_ptt_authority(env)
     gate, calls, mode = (work/name for name in ('gate', 'calls', 'mode'))
     commands = work/'commands'
     commands.mkdir()

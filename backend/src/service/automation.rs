@@ -169,6 +169,26 @@ impl Service {
                     if !attempted.insert(key) {
                         continue;
                     }
+                    let graph = native.snapshot();
+                    let recording = crate::native::validate_identity(&graph, &params.identity)
+                        .ok()
+                        .and_then(crate::routing::stream_direction)
+                        == Some(crate::routing::Direction::Recording);
+                    let _ptt = if recording {
+                        match crate::ptt::require_input_mutation().await {
+                            Ok(guard) => Some(guard),
+                            Err(_) => {
+                                service.update_state(|s| {
+                                    s["automationError"] = json!(
+                                        "Discord PTT owns recording routes; a saved input rule was not applied"
+                                    )
+                                });
+                                continue;
+                            }
+                        }
+                    } else {
+                        None
+                    };
                     if let Err(error) = crate::routing::set(native, &params).await {
                         service.update_state(|s| {
                             s["automationError"] = json!("An application rule could not be applied")

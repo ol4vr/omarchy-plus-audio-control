@@ -1,9 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "ssupt.audio-control",
+  "id": "io.github.ol4vr.audio-control",
   "name": "Advanced Audio Control",
-  "version": "0.9.1",
-  "author": "ssupt",
+  "version": "0.9.1-omarchy.1",
+  "author": "ssupt and Omarchy+ contributors",
+  "homepage": "https://github.com/ol4vr/omarchy-plus-audio-control",
   "description": "Advanced PipeWire and WirePlumber audio mixer for Omarchy: devices, multi-output groups, Bluetooth codecs, safety policies, microphone privacy, audio scenes, persistent routing rules, graph and service diagnostics, channel tests, support reports, and guarded recovery",
   "kinds": [
     "bar-widget",
@@ -11,9 +12,9 @@
     "service"
   ],
   "entryPoints": {
-    "barWidget": "runtime/18ee1133b1582667287109a96c741a74c436683a7ddabc0058049cf83ebddaeb/qml/panels/Panel.qml",
-    "panel": "runtime/18ee1133b1582667287109a96c741a74c436683a7ddabc0058049cf83ebddaeb/qml/panels/AdvancedAudio.qml",
-    "service": "runtime/18ee1133b1582667287109a96c741a74c436683a7ddabc0058049cf83ebddaeb/qml/core/Service.qml"
+    "barWidget": "runtime/ee594eb9bad2fea1be5714af52afb149a21a76a37ac814f037f7aa7600c9de69/qml/panels/Panel.qml",
+    "panel": "runtime/ee594eb9bad2fea1be5714af52afb149a21a76a37ac814f037f7aa7600c9de69/qml/panels/AdvancedAudio.qml",
+    "service": "runtime/ee594eb9bad2fea1be5714af52afb149a21a76a37ac814f037f7aa7600c9de69/qml/core/Service.qml"
   },
   "barWidget": {
     "displayName": "Advanced Audio Control",

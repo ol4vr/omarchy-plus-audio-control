@@ -22,7 +22,12 @@ Panel {
 
   property var service: null
   readonly property var audioService: service ? service : bar && bar.shell
-    ? bar.shell.serviceFor("ssupt.audio-control") : null
+    ? bar.shell.serviceFor("io.github.ol4vr.audio-control") : null
+  readonly property bool inputMutationsAllowed: !!audioService
+    && audioService.inputMutationsAllowed === true
+  readonly property string inputProtectionMessage: audioService
+    ? String(audioService.pttMessage || "Discord PTT ownership cannot be verified")
+    : "Audio service is unavailable"
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
   readonly property var sink: Pipewire.defaultAudioSink
   readonly property var rawSource: Pipewire.defaultAudioSource
@@ -190,6 +195,8 @@ Panel {
   }
   readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
   readonly property string recordingTooltip: {
+    if (!inputMutationsAllowed)
+      return inputProtectionMessage + "\nOutput controls remain available."
     var microphoneAction = hasInput
       ? "Middle-click to " + (inputMuted ? "unmute" : "mute") + " microphone"
       : ""
@@ -357,6 +364,9 @@ Panel {
     var ceiling = Number(maximum)
     if (!mutableAudioNode(node) || !isFinite(requested)
         || !isFinite(ceiling) || ceiling < 0) return false
+    if (!inputMutationsAllowed
+        && (Model.isAudioSource(node) || Model.isRecordingStream(node)))
+      return rejectAudioAction(inputProtectionMessage)
     try {
       return !!audioService && audioService.changeNode(node, { volume: Math.max(0, Math.min(ceiling, requested)) })
     } catch (_error) {
@@ -366,6 +376,9 @@ Panel {
 
   function setAudioNodeMuted(node, muted) {
     if (!mutableAudioNode(node)) return false
+    if (!inputMutationsAllowed
+        && (Model.isAudioSource(node) || Model.isRecordingStream(node)))
+      return rejectAudioAction(inputProtectionMessage)
     try {
       return !!audioService && audioService.changeNode(node, { muted: muted === true })
     } catch (_error) {
@@ -375,6 +388,9 @@ Panel {
 
   function toggleAudioNodeMute(node) {
     if (!mutableAudioNode(node)) return false
+    if (!inputMutationsAllowed
+        && (Model.isAudioSource(node) || Model.isRecordingStream(node)))
+      return rejectAudioAction(inputProtectionMessage)
     try {
       return !!audioService && audioService.changeNode(node, { muted: node.audio.muted !== true })
     } catch (_error) {
@@ -591,10 +607,10 @@ Panel {
   function openAdvancedAudio() {
     controller.hide()
     if (bar && bar.shell && typeof bar.shell.summon === "function")
-      bar.shell.summon("ssupt.audio-control", '{"view":"advanced"}')
+      bar.shell.summon("io.github.ol4vr.audio-control", '{"view":"advanced"}')
     else
       Quickshell.execDetached([
-        "omarchy-shell", "shell", "summon", "ssupt.audio-control", '{"view":"advanced"}'
+        "omarchy-shell", "shell", "summon", "io.github.ol4vr.audio-control", '{"view":"advanced"}'
       ])
   }
 
@@ -724,6 +740,8 @@ Panel {
   }
 
   function setStreamRoute(node, optionValue, direction) {
+    if (direction === "recording" && !inputMutationsAllowed)
+      return rejectAudioAction(inputProtectionMessage)
     var streamSerialValue = streamSerial(node)
     var route = Model.parseStreamOutputOption(optionValue)
     if (streamSerialValue === "" || route.sink === "" || route.mode === "") {
@@ -859,6 +877,10 @@ Panel {
   }
 
   function setInputVolume(v) {
+    if (!inputMutationsAllowed) {
+      rejectAudioAction(inputProtectionMessage)
+      return inputVolume
+    }
     if (directDeviceMutationBusy || !mutableAudioNode(source)) return inputVolume
     var requested = Number(v)
     if (!isFinite(requested)) return inputVolume
@@ -875,6 +897,8 @@ Panel {
   }
 
   function toggleInputMute() {
+    if (!inputMutationsAllowed)
+      return rejectAudioAction(inputProtectionMessage)
     if (directDeviceMutationBusy)
       return rejectAudioAction("Audio is applying another change; retry in a moment")
     if (!toggleAudioNodeMute(source))
@@ -891,7 +915,7 @@ Panel {
     }
     var mute = anyAudible
     var outputOk = !hasOutput || setAudioNodeMuted(volumeSink, mute)
-    var inputOk = !hasInput || setAudioNodeMuted(source, mute)
+    var inputOk = !hasInput || !inputMutationsAllowed || setAudioNodeMuted(source, mute)
     if (!outputOk || !inputOk)
       return rejectAudioAction("An audio device just changed; check its mute state and retry")
     clearInteractionError()
@@ -899,6 +923,8 @@ Panel {
 
 
   function setDefaultDevice(node, previous, direction) {
+    if (direction === "input" && !inputMutationsAllowed)
+      return rejectAudioAction(inputProtectionMessage)
     if (!mutableAudioNode(node)) {
       return rejectAudioAction("That device just changed; wait a moment and retry")
     }
@@ -1081,6 +1107,8 @@ Panel {
   function applySceneAt(index) {
     var scene = index >= 0 ? audioScenes[index] : null
     if (!scene) return
+    if (!inputMutationsAllowed)
+      return showSceneFeedback(inputProtectionMessage, true)
     if (sceneMutationBusy) {
       showSceneFeedback("Audio is applying another change; retry in a moment", true)
       return
@@ -1318,6 +1346,17 @@ Panel {
             }
           }
 
+          Text {
+            textFormat: Text.PlainText
+            visible: !root.inputMutationsAllowed
+            width: parent.width
+            text: root.inputProtectionMessage + ". Output and playback controls remain available."
+            color: root.urgent
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+
           // ---- Scenes ----
           Column {
             width: parent.width
@@ -1352,6 +1391,8 @@ Panel {
                   fill: root.hoverFill
                   currentFill: root.selectedFill
                   bordered: true
+                  enabled: root.inputMutationsAllowed
+                  opacity: enabled ? 1 : 0.6
 
                   Text {
                     textFormat: Text.PlainText
@@ -1564,6 +1605,7 @@ Panel {
                   value: root.inputVolume
                   opacity: root.inputMuted ? 0.5 : 1.0
                   enabled: root.hasInput && !root.directDeviceMutationBusy
+                    && root.inputMutationsAllowed
 
                   onMoved: function(v) { root.setInputVolume(v) }
                   onRightClicked: root.toggleInputMute()
@@ -1622,6 +1664,8 @@ Panel {
                 foreground: root.bar.foreground
                 fill: root.hoverFill
                 currentFill: root.selectedFill
+                enabled: root.inputMutationsAllowed
+                opacity: enabled ? 1 : 0.6
                 onClaimed: function(section, index) {
                   root.cursorActive = true
                   root.focusSection = section
@@ -1753,7 +1797,7 @@ Panel {
                 routeSetBusy: root.pendingStreamRoute !== null
                   || defaultSetPending
                   || root.pendingStreamRoute !== null || rulesStore.busy
-                mutationBlocked: sceneController.busy
+                mutationBlocked: sceneController.busy || !root.inputMutationsAllowed
                 hasCursor: root.cursorActive
                   && root.focusSection === (recordingStreamDelegate.recording ? "recording" : "streams")
                   && root.selectedIndex === recordingStreamDelegate.rowIndex

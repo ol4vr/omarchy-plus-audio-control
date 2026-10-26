@@ -23,12 +23,24 @@ def rejected(check, message):
 
 with tempfile.TemporaryDirectory(prefix='audio-release-test-') as temporary:
     candidate = release.build(Path(temporary)/'plugin with spaces', binary)
+    launcher_spec = importlib.util.spec_from_file_location(
+        'audio_launcher', candidate/'packaging/launch-backend.py')
+    launcher = importlib.util.module_from_spec(launcher_spec)
+    launcher_spec.loader.exec_module(launcher)
+    assert launcher.prepare(candidate) == candidate/'bin/omarchy-audio-service'
     manifests = [*candidate.glob('manifest.json'), *candidate.glob('*/manifest.json')]
     assert manifests == [candidate/'manifest.json'], 'Marketplace discovers extra plugin manifests'
     assert not (candidate/'docs').exists(), 'Development documentation was included in the package'
     assert not list(candidate.glob('*.qml')) and not list(candidate.glob('*.js')), 'UI files leaked into the package root'
     metadata = release.verify(candidate)
     assert metadata['buildId'] == release.source_id(root)
+    release_metadata = candidate/'backend-release.json'
+    original_release_metadata = release_metadata.read_bytes()
+    changed_release_metadata = json.loads(release_metadata.read_text())
+    changed_release_metadata['sha256'] = '0' * 64
+    release_metadata.write_text(json.dumps(changed_release_metadata))
+    rejected(lambda: launcher.prepare(candidate), 'Launcher accepted a mismatched native hash')
+    release_metadata.write_bytes(original_release_metadata)
     nested_source = candidate/'backend/src/service/microphone.rs'
     original_source = nested_source.read_bytes()
     nested_source.write_bytes(original_source + b'\n// Changed microphone supervision\n')
@@ -38,11 +50,11 @@ with tempfile.TemporaryDirectory(prefix='audio-release-test-') as temporary:
     nested_extra.write_text('// Added after the backend was built\n')
     rejected(lambda: release.verify(candidate), 'Added nested Rust source was accepted')
     nested_extra.unlink()
-    launcher = candidate/'packaging/launch-backend.py'
-    original_launcher = launcher.read_bytes()
-    launcher.write_bytes(original_launcher + b'\n# Changed native preparation\n')
+    launcher_path = candidate/'packaging/launch-backend.py'
+    original_launcher = launcher_path.read_bytes()
+    launcher_path.write_bytes(original_launcher + b'\n# Changed native preparation\n')
     rejected(lambda: release.verify(candidate), 'Modified native launcher was accepted')
-    launcher.write_bytes(original_launcher)
+    launcher_path.write_bytes(original_launcher)
     executable = candidate/'bin/omarchy-audio-service'
     original = executable.read_bytes()
     executable.write_bytes(b'broken executable')
@@ -81,6 +93,7 @@ with tempfile.TemporaryDirectory(prefix='audio-release-test-') as temporary:
     source_manifest.write_text(original_manifest)
     executable.chmod(0o644)
     rejected(lambda: release.verify(candidate), 'Non-executable backend was accepted')
+    rejected(lambda: launcher.prepare(candidate), 'Launcher accepted a non-executable backend')
     executable.chmod(0o755)
     link = candidate/'unexpected-link'
     link.symlink_to(candidate/'README.md')

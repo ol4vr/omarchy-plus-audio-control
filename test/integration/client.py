@@ -1,7 +1,29 @@
 """Bounded JSONL client shared by the private backend integration tests."""
 import json
+import os
+from pathlib import Path
 import socket
 import time
+
+
+def prepare_ptt_authority(env, enabled=False):
+    """Create the private disabled/enabled PTT contract for isolated tests."""
+    state = Path(env['XDG_STATE_HOME'])/'omarchy-plus/discord-ptt'
+    authority = Path(env['XDG_RUNTIME_DIR'])/'omarchy-plus-discord-ptt'
+    state.mkdir(parents=True, mode=0o700)
+    authority.mkdir(parents=True, mode=0o700)
+    os.chmod(state, 0o700)
+    os.chmod(authority, 0o700)
+    contract = state/'authority-v1'
+    contract.write_text('shared-lock-v1\n')
+    os.chmod(contract, 0o600)
+    marker = state/'enabled'
+    if enabled:
+        marker.write_bytes(b'')
+        os.chmod(marker, 0o600)
+    else:
+        marker.unlink(missing_ok=True)
+    return state, authority
 
 
 class Client:

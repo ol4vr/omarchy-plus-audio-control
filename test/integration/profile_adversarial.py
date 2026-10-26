@@ -2,7 +2,7 @@
 import os, shlex, subprocess, sys, tempfile, time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
-from client import Client
+from client import Client, prepare_ptt_authority
 BINARY=Path(sys.argv[1]).resolve()
 
 def until(predicate):
@@ -21,6 +21,7 @@ for mode in ['source-first', 'sink-first', 'loopback']:
     env=dict(os.environ,XDG_RUNTIME_DIR=temporary,PIPEWIRE_RUNTIME_DIR=temporary,PIPEWIRE_REMOTE='audio-test',
              XDG_CONFIG_HOME=str(work/'config'),XDG_STATE_HOME=str(work/'state'),XDG_CACHE_HOME=str(work/'cache'),
              AUDIO_CONTROL_PRIVATE_RUNTIME_DIR=temporary,PULSE_SERVER='unix:'+str(work/'pulse'))
+    prepare_ptt_authority(env)
     for key in list(env):
         if key.startswith('OMARCHY_AUDIO_'):env.pop(key)
     procs=[]; client=None

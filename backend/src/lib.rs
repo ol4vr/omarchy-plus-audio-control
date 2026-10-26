@@ -9,6 +9,7 @@ pub mod native;
 pub mod outputs;
 pub mod profiles;
 pub mod protocol;
+pub mod ptt;
 pub mod pulse;
 pub mod scenes;
 pub mod server;

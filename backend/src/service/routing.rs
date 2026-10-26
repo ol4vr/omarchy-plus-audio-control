@@ -29,7 +29,18 @@ impl Service {
         let _busy = Busy(self);
         let result = match request.method.as_str() {
             "default.set" => {
-                defaults::select(native, self.storage.as_ref(), request.params()?).await
+                let params = request.params::<defaults::Set>()?;
+                let graph = native.snapshot();
+                let endpoint = native::validate_identity(&graph, &params.identity)?;
+                let direction = routing::endpoint_direction(endpoint).ok_or_else(|| {
+                    Failure::new("invalid_target", "Node is not an audio endpoint")
+                })?;
+                let _ptt = if direction == routing::Direction::Recording {
+                    Some(crate::ptt::require_input_mutation().await?)
+                } else {
+                    None
+                };
+                defaults::select(native, self.storage.as_ref(), params).await
             }
             "default.compat" => self.compat_default(native, request.params()?).await,
             _ => self.route_application(native, request.params()?).await,
@@ -50,6 +61,11 @@ impl Service {
             "output" => routing::Direction::Playback,
             "input" => routing::Direction::Recording,
             _ => return Err(Failure::new("invalid_params", "Invalid audio direction")),
+        };
+        let _ptt = if direction == routing::Direction::Recording {
+            Some(crate::ptt::require_input_mutation().await?)
+        } else {
+            None
         };
         if params.name.is_empty() || params.name.len() > 160 || params.previous.len() > 160 {
             return Err(Failure::new(
@@ -99,6 +115,11 @@ impl Service {
         let app = crate::automation::app(stream);
         let direction = routing::stream_direction(stream)
             .ok_or_else(|| Failure::new("invalid_target", "Node is not an application stream"))?;
+        let _ptt = if direction == routing::Direction::Recording {
+            Some(crate::ptt::require_input_mutation().await?)
+        } else {
+            None
+        };
         let target = routing::endpoint(&graph, &params.target, direction)?
             .name
             .clone();

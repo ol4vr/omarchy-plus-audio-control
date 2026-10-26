@@ -1,0 +1,7 @@
+Advanced Audio Control for Omarchy+
+
+Based on Advanced Audio Control for Omarchy by Lorenzo Golluscio (ssupt),
+upstream https://github.com/ssupt/omarchy-audio-control at commit
+c822e48fa3b0d8f3cc2f0bf96eace416f30f0764.
+
+Includes and adapts work from Omarchy by 37signals/Basecamp. See LICENSE.

@@ -3,6 +3,10 @@
 Advanced Audio Control brings persistent routing, saved setups, and device
 controls to Omarchy's audio panel.
 
+The Omarchy+ `0.9.1-omarchy.1` release passed Hugin security, compatibility,
+rollback, and physical acceptance on 2026-10-26. Its reviewed backend SHA-256
+is recorded in `BUILD-PROVENANCE.json` and `backend-release.json`.
+
 Choose which output or microphone each application uses, play through several
 outputs together, and restore saved device settings. Keep Omarchy's familiar
 quick mixer for everyday volume changes, with an advanced window for profiles,
@@ -64,45 +68,41 @@ An output group can drift when its devices use separate clocks, especially with
 Bluetooth. Microphone tests start only when requested; clips stay in memory
 until discarded or until the advanced window closes.
 
-## Install
+## Discord PTT ownership on Hugin
 
-Requires **Omarchy Quattro on x86_64 or aarch64 Linux**, PipeWire and WirePlumber,
-with Omarchy's usual audio and desktop tools. The Git checkout includes an
-x86_64 backend, so x86_64 installation needs no Rust toolchain.
+This Omarchy+-owned adaptation treats `io.github.ol4vr.discord-ptt` as the
+authoritative microphone owner. The Rust backend verifies its private state
+contract while holding the same cross-process authority lock as the PTT helper.
+When PTT is enabled, output volume, output selection, and playback routing keep
+working, while microphone volume/mute, input defaults and routes, recording
+rules, profiles, input ports, Bluetooth capture policy, scenes that may alter
+capture, and microphone tests fail closed. The lock is retained until an
+admitted input mutation finishes, preventing a PTT transition from racing the
+operation. Missing or unsafe PTT state also disables microphone mutations.
 
-On **aarch64** (including Asahi Linux), install Rust/Cargo **1.85+**, libclang,
-pkg-config, and the PipeWire and libpulse development headers before enabling
-the plugin. For Arch-based systems:
+The QML surfaces explain the disabled controls, but the backend is the security
+boundary. With PTT disabled and its authority contract healthy, normal input
+controls remain available.
 
-```bash
-sudo pacman -S --needed rust clang pkgconf pipewire libpulse
-```
+## Installation contract
 
-The plugin builds a native backend on first startup and after updates that
-change runtime sources. The panel shows **Preparing audio service…** until the
-build finishes. Builds stay under
-`${XDG_CACHE_HOME:-~/.cache}/omarchy-audio-control/`; dependencies are reused
-across updates, and the plugin checkout remains unchanged. Later starts use
-the cached executable. If preparation fails, install the requirements above
-and reload the plugin. Manual binary replacement after each update is no
-longer needed.
+Hugin deployment is performed only by the Omarchy+ reconciler from an
+immutable reviewed revision. A release contains a native backend built from the
+locked Rust source by the controlled release process. Startup verifies the
+source build ID, target, executable ownership/mode, and SHA-256 from
+`backend-release.json`; it never invokes Cargo, downloads dependencies, or
+replaces the binary. A verification failure leaves the audio plugin unavailable
+instead of executing an unreviewed binary.
 
-```bash
-omarchy plugin add https://github.com/ssupt/omarchy-audio-control.git --enable
-```
-
-Update or remove it:
-
-```bash
-omarchy plugin update ssupt.audio-control
-omarchy plugin remove ssupt.audio-control
-```
+The optional upstream systemd units are retained as attributed source but are
+not installed on Hugin. See [BUILD.md](BUILD.md), [SECURITY.md](SECURITY.md), and
+[ROLLBACK.md](ROLLBACK.md) for the build, security, and removal contracts.
 
 Disabling or removing the plugin restores Omarchy's built-in audio widget.
-To add **Setup > Audio** to the menu, run:
+The managed integration can add **Setup > Audio** with:
 
 ```bash
-~/.config/omarchy/plugins/ssupt.audio-control/scripts/audio-menu-entry install
+~/.config/omarchy/plugins/io.github.ol4vr.audio-control/scripts/audio-menu-entry install
 ```
 
 Use the same helper with `remove` before removing the plugin.
@@ -152,13 +152,13 @@ matching binary, release metadata, manifest, and generated runtime when changing
 runtime sources. CI also runs native audio, lifecycle, and upgrade tests under
 `test/integration/` with private audio devices and configuration.
 
-For testing outside the shell, `scripts/audio-rust-backend install` and
-`uninstall` manage an optional systemd user service.
+`scripts/audio-rust-backend` and `packaging/systemd/` are upstream-compatible
+developer facilities. They are not used by the Hugin production contract.
 
 The Bluetooth companion calls `default.compat` with a node ID and name; the
 service verifies the live endpoint and reports the outcome. Both plugins share
 `audio-preferences.json`, while compatibility helpers support older companions.
 Coordinate releases when changing that shared contract.
 
-[MIT license](LICENSE), matching Omarchy's original audio widget.
-More plugins: [omarchy-plugins](https://github.com/ssupt/omarchy-plugins).
+[MIT license](LICENSE). This adaptation is based on
+[`ssupt/omarchy-audio-control`](UPSTREAM.md) and retains its attribution.

@@ -77,6 +77,11 @@ Item {
   property bool windowRuleReady: false
   property bool recoveryConfirmOpen: false
   readonly property bool opened: window.visible
+  readonly property bool inputMutationsAllowed: !!service
+    && service.inputMutationsAllowed === true
+  readonly property string inputProtectionMessage: service
+    ? String(service.pttMessage || "Discord PTT ownership cannot be verified")
+    : "Audio service is unavailable"
 
   property var audioCards: []
   property var audioPorts: []
@@ -212,9 +217,16 @@ Item {
   readonly property color hoverFill: Style.hoverFillFor(foreground, Commons.Color.accent)
   onOutputDeviceChanged: enforceOutputVolumeLimit()
 
+  function inputPolicyKey(key) {
+    return key === "device.routes.default-source-volume"
+      || key === "node.stream.default-capture-volume"
+      || key === "bluetooth.autoswitch-to-headset-profile"
+      || key === "bluetooth.profile-preference"
+  }
+
   function pluginId() {
     var id = manifest && typeof manifest.id === "string" ? String(manifest.id) : ""
-    return id !== "" ? id : "ssupt.audio-control"
+    return id !== "" ? id : "io.github.ol4vr.audio-control"
   }
 
   function toggleQuickPanel() {
@@ -244,6 +256,8 @@ Item {
     clearErrors()
     recoveryConfirmOpen = false
     microphoneTest.discard()
+    if (service && typeof service.refreshPttState === "function")
+      service.refreshPttState()
     cancelAliasEdit()
     if (windowRuleReady) showOnCurrentWorkspace()
     else if (!windowRuleProc.running) windowRuleProc.running = true
@@ -292,7 +306,7 @@ Item {
     profileMenuCount = 0
     recoveryConfirmOpen = false
     microphoneTest.discard()
-    if (shell && typeof shell.hide === "function") shell.hide("ssupt.audio-control")
+    if (shell && typeof shell.hide === "function") shell.hide("io.github.ol4vr.audio-control")
     else window.visible = false
   }
 
@@ -396,6 +410,10 @@ Item {
 
   function setPolicySetting(key, value) {
     if (policyMutationBlocked) return
+    if (!inputMutationsAllowed && inputPolicyKey(key)) {
+      policy.error = inputProtectionMessage
+      return
+    }
     policy.setSetting(key, value)
   }
 
@@ -475,6 +493,10 @@ Item {
 
   function setBalance(node, value) {
     if (audioMutationBusy || !mutableAudioNode(node)) return false
+    if (!inputMutationsAllowed && Model.isAudioSource(node)) {
+      profileSetError = inputProtectionMessage
+      return false
+    }
     var indices = stereoIndices(node)
     if (indices.left < 0 || indices.right < 0) return false
     try {
@@ -661,7 +683,7 @@ Item {
     }
     if (activeTab === 0 && selectedIndex === microphoneTestIndex) {
       if (profileSetPending || portSetPending || sceneController.busy
-          || policy.busy || diagnosticsMutationBusy) return
+          || policy.busy || diagnosticsMutationBusy || !inputMutationsAllowed) return
       microphoneTest.activate()
       return
     }
@@ -718,6 +740,10 @@ Item {
   }
 
   function setAudioProfile(card, profile) {
+    if (!inputMutationsAllowed) {
+      profileSetError = inputProtectionMessage
+      return
+    }
     if (!card || !card.identity || !profile || !service || audioMutationBusy) return
     profileSetError = ""
     profileSetPending = true
@@ -728,6 +754,10 @@ Item {
   }
 
   function setAudioPort(port, value) {
+    if (port && port.direction === "input" && !inputMutationsAllowed) {
+      portSetError = inputProtectionMessage
+      return
+    }
     if (!port || !port.identity || !value || !service || audioMutationBusy) return
     portSetError = ""
     portSetPending = true
@@ -738,10 +768,18 @@ Item {
   }
 
   function setBluetoothAutoSwitch(enabled) {
+    if (!inputMutationsAllowed) {
+      policy.error = inputProtectionMessage
+      return
+    }
     policy.setSetting("bluetooth.autoswitch-to-headset-profile", enabled)
   }
 
   function setBluetoothProfilePreference(value) {
+    if (!inputMutationsAllowed) {
+      policy.error = inputProtectionMessage
+      return
+    }
     policy.setSetting("bluetooth.profile-preference", value)
   }
 
@@ -758,6 +796,11 @@ Item {
   }
 
   function runRuleWrite(args) {
+    if (args && args[0] === "set-app" && args[2] === "recording"
+        && !inputMutationsAllowed) {
+      showRoutingStatus(inputProtectionMessage, true)
+      return false
+    }
     routingStatus = ""
     return rulesStore.write(args)
   }
@@ -838,6 +881,8 @@ Item {
   function applySceneAt(index) {
     var scene = index >= 0 ? audioScenes[index] : null
     if (!scene || sceneMutationBusy) return
+    if (!inputMutationsAllowed)
+      return showSceneStatus(inputProtectionMessage, true)
     sceneStatus = ""
     sceneController.apply(scene)
   }
@@ -945,6 +990,8 @@ Item {
   }
 
   function changeAppRuleTarget(appKey, direction, targetName) {
+    if (direction === "recording" && !inputMutationsAllowed)
+      return showRoutingStatus(inputProtectionMessage, true)
     if (targetName === "") runRuleWrite(["del-app", appKey, direction])
     else runRuleWrite(["set-app", appKey, direction, targetName])
   }
@@ -970,9 +1017,11 @@ Item {
     minimumSize: Qt.size(640, 440)
 
     onVisibleChanged: {
+      if (visible && root.service && typeof root.service.refreshPttState === "function")
+        root.service.refreshPttState()
       if (!visible && !root.closingFromHost) {
         if (root.shell && typeof root.shell.hide === "function")
-          root.shell.hide("ssupt.audio-control")
+          root.shell.hide("io.github.ol4vr.audio-control")
       }
     }
 
@@ -1071,6 +1120,17 @@ Item {
                   wrapMode: Text.WordWrap
                 }
               }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              visible: !root.inputMutationsAllowed
+              width: parent.width
+              text: root.inputProtectionMessage + ". Output and playback controls remain available."
+              color: root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
             }
 
             PanelSeparator { foreground: root.foreground }
@@ -1241,6 +1301,8 @@ Item {
                     fill: root.hoverFill
                     fontFamily: root.fontFamily
                     menuEnabled: !root.audioMutationBusy
+                      && (audioPortDelegate.port.direction !== "input"
+                        || root.inputMutationsAllowed)
                     onCursorRequested: root.setCursor(audioPortDelegate.rowIndex)
                     onPortSelected: function(value) { root.setAudioPort(audioPortDelegate.port, value) }
                     onMenuToggled: function(open) {
@@ -1326,7 +1388,7 @@ Item {
                   MouseArea {
                     anchors.fill: parent
                     enabled: root.bluetoothAutoSwitchLoaded
-                      && !policy.busy
+                      && !policy.busy && root.inputMutationsAllowed
                     hoverEnabled: true
                     cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                     onContainsMouseChanged: if (containsMouse) root.setCursor(0)
@@ -1344,7 +1406,7 @@ Item {
                   fontFamily: root.fontFamily
                   preference: root.bluetoothProfilePreference
                   menuEnabled: root.bluetoothProfilePreferenceLoaded
-                    && !policy.busy
+                    && !policy.busy && root.inputMutationsAllowed
                   onCursorRequested: root.setCursor(1)
                   onPreferenceSelected: function(value) { root.setBluetoothProfilePreference(value) }
                   onMenuToggled: function(open) {
@@ -1421,6 +1483,7 @@ Item {
                       busy: policy.busy && root.pendingPolicyKey === modelData.key
                       enabled: root.policySettingsLoaded && !policy.busy
                         && !root.policyMutationBlocked
+                        && (root.inputMutationsAllowed || !root.inputPolicyKey(modelData.key))
                       opacity: enabled ? 1 : 0.6
                       hasCursor: root.cursorActive && root.activeTab === 2
                         && root.selectedIndex === index
@@ -1465,6 +1528,7 @@ Item {
                       value: Number(Model.mapValue(root.policySettings, modelData.key, 0))
                       enabled: root.policySettingsLoaded && !policy.busy
                         && !root.policyMutationBlocked
+                        && (root.inputMutationsAllowed || !root.inputPolicyKey(modelData.key))
                       opacity: enabled ? 1 : 0.6
                       hasCursor: root.cursorActive && root.activeTab === 2
                         && root.selectedIndex === rowIndex
@@ -1654,7 +1718,7 @@ Item {
                     width: parent.width
                     sceneName: modelData ? String(modelData.name || "") : ""
                     summary: Model.sceneSummary(modelData)
-                    actionEnabled: !root.sceneMutationBusy
+                    actionEnabled: !root.sceneMutationBusy && root.inputMutationsAllowed
                     hasCursor: root.cursorActive && root.activeTab === 3
                       && root.selectedIndex === 1 + sceneListRow.index
                     onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(sceneListRow)
@@ -1952,7 +2016,10 @@ Item {
                       showLabel: false
                       popupDirection: "down"
                       value: ""
-                      options: rulesStore.targetOptions
+                      options: root.inputMutationsAllowed ? rulesStore.targetOptions
+                        : rulesStore.targetOptions.filter(function(option) {
+                            return rulesStore.directionForTarget(option.value) === "playback"
+                          })
                       hasCursor: newRuleDeviceRow.hasCursor
                       enabled: root.newRuleApp !== "" && !root.routingMutation
                       opacity: enabled ? 1 : 0.6
@@ -2002,6 +2069,8 @@ Item {
                       ? root.recordingRuleTargetOptions(routingRuleDelegate.currentValue)
                       : root.ruleTargetOptions(routingRuleDelegate.currentValue)
                     menuEnabled: !root.routingMutation
+                    targetEnabled: routingRuleDelegate.direction !== "recording"
+                      || root.inputMutationsAllowed
                     keyboardControl: root.routingControl
                     hasCursor: root.cursorActive && root.activeTab === 4
                       && root.selectedIndex === root.routingRuleStartIndex
@@ -2177,7 +2246,7 @@ Item {
                       fontFamily: root.fontFamily
                       currentProfile: root.selectedAudioProfile(bluetoothProfileDelegate.card)
                       options: root.profileOptions(bluetoothProfileDelegate.card)
-                      menuEnabled: !root.audioMutationBusy
+                      menuEnabled: !root.audioMutationBusy && root.inputMutationsAllowed
                       onCursorRequested: root.setCursor(bluetoothProfileDelegate.rowIndex)
                       onProfileSelected: function(profile) {
                         root.setAudioProfile(bluetoothProfileDelegate.card, profile)
@@ -2220,7 +2289,7 @@ Item {
                       fontFamily: root.fontFamily
                       currentProfile: root.selectedAudioProfile(deviceProfileDelegate.card)
                       options: root.profileOptions(deviceProfileDelegate.card)
-                      menuEnabled: !root.audioMutationBusy
+                      menuEnabled: !root.audioMutationBusy && root.inputMutationsAllowed
                       onCursorRequested: root.setCursor(deviceProfileDelegate.rowIndex)
                       onProfileSelected: function(profile) {
                         root.setAudioProfile(deviceProfileDelegate.card, profile)
@@ -2278,7 +2347,7 @@ Item {
                     rowIndex: root.inputBalanceIndex
                     deviceLabel: root.nodeLabel(root.inputDevice)
                     balanceValue: root.balanceFor(root.inputDevice)
-                    enabled: !root.audioMutationBusy
+                    enabled: !root.audioMutationBusy && root.inputMutationsAllowed
                     foreground: root.foreground
                     fill: root.hoverFill
                     fontFamily: root.fontFamily
@@ -2317,7 +2386,7 @@ Item {
                     error: microphoneTest.error
                     enabled: !profileSetPending && !portSetPending
                       && !sceneController.busy && !policy.busy
-                      && !root.diagnosticsMutationBusy
+                      && !root.diagnosticsMutationBusy && root.inputMutationsAllowed
                     hasCursor: root.cursorActive && root.activeTab === 0
                       && root.selectedIndex === root.microphoneTestIndex
                     foreground: root.foreground

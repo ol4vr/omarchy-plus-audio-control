@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 
-from client import Client
+from client import Client, prepare_ptt_authority
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = Path(sys.argv[1]).resolve()
@@ -34,6 +34,7 @@ with tempfile.TemporaryDirectory(prefix='audio-routing-') as temporary, ExitStac
                DBUS_SYSTEM_BUS_ADDRESS='unix:path='+str(work/'bus'),
                WIREPLUMBER_CONFIG_DIR='/usr/share/wireplumber',
                PULSE_SERVER='unix:'+str(work/'pulse/native'), PULSE_RUNTIME_PATH=str(work/'pulse'))
+    ptt_state, ptt_authority = prepare_ptt_authority(env)
     bus = work/'bus.conf'
     bus.write_text('<busconfig><type>session</type><listen>unix:path='+str(work/'bus')+'</listen>'
         '<auth>EXTERNAL</auth><policy context="default"><allow send_destination="*"/>'
@@ -137,6 +138,18 @@ with tempfile.TemporaryDirectory(prefix='audio-routing-') as temporary, ExitStac
             assert reply.get('error', {}).get('code') in codes, reply
             return reply
 
+        def set_ptt(enabled):
+            marker = ptt_state/'enabled'
+            with (ptt_authority/'authority.lock').open('a+') as authority:
+                fcntl.flock(authority, fcntl.LOCK_EX)
+                if enabled:
+                    marker.write_bytes(b'')
+                    marker.chmod(0o600)
+                else:
+                    marker.unlink(missing_ok=True)
+                fcntl.flock(authority, fcntl.LOCK_UN)
+            assert client.request('ptt.status')['state'] == ('enabled' if enabled else 'disabled')
+
         assert select('audio_test_output')['outcome'] == 'applied'
         assert select('audio_test_input')['outcome'] == 'applied'
         follow = start_stream('test_follow')
@@ -144,7 +157,47 @@ with tempfile.TemporaryDirectory(prefix='audio-routing-') as temporary, ExitStac
         recorder = start_stream('test_record', True)
         until(lambda: linked('test_follow', 'audio_test_output') and linked('test_pinned', 'audio_test_output')
               and linked('test_record', 'audio_test_input'))
+
+        set_ptt(True)
+        assert select('audio_test_output')['outcome'] == 'applied'
+        assert client.request('node.audio', dict(identity=identity('audio_test_output'),
+            patch=dict(muted=False)))['outcome'] == 'applied'
         assert route('test_pinned', 'audio_test_output')['outcome'] == 'applied'
+        rejected('default.set', dict(identity=identity('audio_test_other_input')),
+                 {'ptt_owned'})
+        rejected('route.set', dict(identity=identity('test_record'),
+            target=identity('audio_test_other_input'), mode='override'), {'ptt_owned'})
+        rejected('node.audio', dict(identity=identity('audio_test_input'),
+            patch=dict(muted=False)), {'ptt_owned'})
+        rejected('rules.set_app', dict(app='Discord', direction='recording',
+            target='audio_test_other_input'), {'ptt_owned'})
+        rejected('rules.delete_app', dict(app='Discord', direction='recording'),
+                 {'ptt_owned'})
+        rejected('devices.forget', dict(address='00:11:22:33:44:55'),
+                 {'ptt_owned'})
+        rejected('preferences.profile', dict(address='00:11:22:33:44:55',
+            profile='headset-head-unit'), {'ptt_owned'})
+        for key, value in (
+                ('device.routes.default-source-volume', .6),
+                ('node.stream.default-capture-volume', .6),
+                ('bluetooth.autoswitch-to-headset-profile', True),
+                ('bluetooth.profile-preference', 'quality')):
+            rejected('policy.set', dict(generation=client.state['generation'],
+                key=key, value=value), {'ptt_owned'})
+        rejected('scene.apply', dict(scene=dict(name='Unsafe input scene')),
+                 {'ptt_owned'})
+        rejected('microphone.start', dict(owner='ptt-test', record=True,
+            identity=identity('audio_test_input')), {'ptt_owned'})
+        assert linked('test_record', 'audio_test_input')
+
+        contract = ptt_state/'authority-v1'
+        contract.replace(ptt_state/'authority-v1.saved')
+        rejected('default.set', dict(identity=identity('audio_test_other_input')),
+                 {'ptt_unavailable'})
+        (ptt_state/'authority-v1.saved').replace(contract)
+        set_ptt(False)
+        print('PASS: PTT blocks direct and indirect input mutations while output control remains available', flush=True)
+
         meter = launch(['pw-record', '--raw', '--rate=48000', '--channels=2', '--format=f32',
                         '--target='+node('test_follow')['serial'],
                         '--properties=node.name=test_meter media.category=Monitor stream.monitor=true',
@@ -358,7 +411,7 @@ with tempfile.TemporaryDirectory(prefix='audio-routing-') as temporary, ExitStac
         # Deny the backend metadata writes without changing the private graph.
         objects = json.loads(run('pw-dump'))
         backend_id = next(o['id'] for o in objects if o['type'] == 'PipeWire:Interface:Client'
-            and o.get('info',{}).get('props',{}).get('application.id') == 'ssupt.audio-control')
+            and o.get('info',{}).get('props',{}).get('application.id') == 'io.github.ol4vr.audio-control')
         metadata_id = next(o['id'] for o in objects if o['type'] == 'PipeWire:Interface:Metadata' and o.get('props',{}).get('metadata.name') == 'default')
         run('pw-cli', 'permissions', str(backend_id), str(metadata_id), '0500')
         rejected('route.set', dict(identity=identity('test_follow'), target=identity('audio_test_output'), mode='override'), {'not_applied'})

@@ -75,7 +75,7 @@ fn internal(node: &Node) -> bool {
         || node
             .properties
             .get("application.id")
-            .is_some_and(|v| v == "ssupt.audio-control")
+            .is_some_and(|v| v == "io.github.ol4vr.audio-control")
 }
 fn monitor(node: &Node) -> bool {
     class(node) == "Stream/Input/Audio"
@@ -616,9 +616,10 @@ mod tests {
         assert!(endpoint_direction(&monitor).is_none());
         let mut group = graph.nodes[&2].clone();
         group.name = "omarchy_audio_group_0123456789abcdef".into();
-        group
-            .properties
-            .insert("application.id".into(), "ssupt.audio-control".into());
+        group.properties.insert(
+            "application.id".into(),
+            "io.github.ol4vr.audio-control".into(),
+        );
         assert_eq!(endpoint_direction(&group), Some(Direction::Playback));
         group
             .properties

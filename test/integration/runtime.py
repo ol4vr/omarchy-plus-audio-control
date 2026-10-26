@@ -13,7 +13,7 @@ import sys
 import tempfile
 import time
 
-from client import Client
+from client import Client, prepare_ptt_authority
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / 'backend/target/debug/omarchy-audio-service'
@@ -69,6 +69,7 @@ assert len(sys.stdin.buffer.read()) > 0
                # The private config must not invoke user tool-manager shims
                # whose trust/configuration changes with XDG_CONFIG_HOME.
                PATH=str(binaries)+os.pathsep+os.defpath+os.pathsep+os.environ['PATH'])
+    prepare_ptt_authority(env)
     # Remove inherited per-store overrides so tests cannot touch user documents.
     for key in ('OMARCHY_AUDIO_CONTROL_FILE', 'OMARCHY_AUDIO_PREFERENCES_FILE', 'OMARCHY_AUDIO_RULES_FILE', 'OMARCHY_AUDIO_SCENES_FILE'):
         env.pop(key, None)

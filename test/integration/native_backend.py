@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Exercise CPU selection, update invalidation, and native-build failures."""
+"""Verify immutable native-backend admission without building or downloading."""
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
 import struct
-import subprocess
 from subprocess import run as run_process
 import sys
 import tempfile
@@ -26,79 +25,141 @@ class NativeBackendTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)/'plugin with spaces'
         self.root.mkdir()
-        self.cache = Path(self.temporary.name)/'cache with spaces'
         self.source = self.root/'source'
-        self.source.write_text('release one')
+        self.source.write_text('reviewed source')
+        self.inspected = []
         self.tools = SimpleNamespace(source_id=self.source_id, inspect=self.inspect)
         self.addCleanup(patch.stopall)
         patch.object(launcher, 'release_tools', return_value=self.tools).start()
         patch.object(launcher.platform, 'system', return_value='Linux').start()
-        patch.object(launcher.shutil, 'which', return_value='/cargo').start()
-        self.cargo = patch.object(launcher.subprocess, 'run', side_effect=self.compile).start()
-        self.inspected = []
 
     def source_id(self, _root):
         return hashlib.sha256(self.source.read_bytes()).hexdigest()
 
-    def write_binary(self, path, machine, build_id=None):
+    def write_binary(self, machine='x86_64', build_id=None):
         target, elf_machine = launcher.TARGETS[machine]
+        binary = self.root/'bin/omarchy-audio-service'
         header = bytearray(20)
         header[:6] = b'\x7fELF\x02\x01'
         struct.pack_into('<H', header, 18, elf_machine)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(header + json.dumps({
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(header + json.dumps({
             'buildId': build_id or self.source_id(self.root),
-            'target': target, 'protocolVersion': 1,
+            'target': target,
+            'protocolVersion': 1,
         }).encode())
-        path.chmod(0o755)
+        binary.chmod(0o755)
+        self.write_metadata(binary, target)
+        return binary
+
+    def write_metadata(self, binary, expected_target, **changes):
+        value = dict(
+            buildId=self.source_id(self.root),
+            target=expected_target,
+            sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+        )
+        value.update(changes)
+        (self.root/'backend-release.json').write_text(json.dumps(value))
 
     def inspect(self, path):
         self.inspected.append(path)
         return json.loads(path.read_bytes()[20:])
 
-    def compile(self, command, **kwargs):
-        self.assertEqual(kwargs['stdin'], subprocess.DEVNULL)
-        target = command[command.index('--target')+1]
-        machine = next(key for key, value in launcher.TARGETS.items() if value[0] == target)
-        directory = Path(command[command.index('--target-dir')+1])
-        binary = directory/target/'release/omarchy-audio-service'
-        self.write_binary(binary, machine)
-        artifact = {'reason': 'compiler-artifact', 'executable': str(binary),
-                    'target': {'name': 'omarchy-audio-service'}}
-        return SimpleNamespace(stdout=json.dumps(artifact)+'\n')
+    def prepare(self, machine='x86_64'):
+        return launcher.prepare(self.root, machine=machine)
 
-    def prepare(self, machine='aarch64'):
-        return launcher.prepare(self.root, machine=machine, cache_home=self.cache)
-
-    def test_matching_bundle_needs_no_compiler(self):
-        binary = self.root/'bin/omarchy-audio-service'
+    def test_matching_reviewed_bundle_is_admitted(self):
         for machine in launcher.TARGETS:
-            self.write_binary(binary, machine)
-            with patch.object(launcher.shutil, 'which', return_value=None):
+            with self.subTest(machine=machine):
+                binary = self.write_binary(machine)
                 self.assertEqual(self.prepare(machine), binary)
-        self.cargo.assert_not_called()
+                self.assertEqual(self.inspected[-1], binary)
 
-    def test_foreign_bundle_is_never_executed_and_native_cache_is_reused(self):
-        bundled = self.root/'bin/omarchy-audio-service'
-        self.write_binary(bundled, 'x86_64')
-        original = bundled.read_bytes()
-        binary = self.prepare()
-        self.assertEqual(self.cargo.call_count, 1)
-        self.assertEqual(self.prepare(), binary)
-        self.assertEqual(self.cargo.call_count, 1)
-        self.assertNotIn(bundled, self.inspected)
-        self.assertEqual(bundled.read_bytes(), original)
+    def test_source_target_protocol_and_hash_must_all_match(self):
+        binary = self.write_binary()
+        target = launcher.TARGETS['x86_64'][0]
+        for changes in (dict(buildId='0'*64),
+                        dict(target='aarch64-unknown-linux-gnu'),
+                        dict(sha256='0'*64)):
+            with self.subTest(changes=changes):
+                self.write_metadata(binary, target, **changes)
+                with self.assertRaisesRegex(ValueError, 'metadata|verification'):
+                    self.prepare()
+        self.write_metadata(binary, target)
+        data = json.loads(binary.read_bytes()[20:])
+        data['protocolVersion'] = 2
+        binary.write_bytes(binary.read_bytes()[:20] + json.dumps(data).encode())
+        binary.chmod(0o755)
+        self.write_metadata(binary, target)
+        with self.assertRaisesRegex(ValueError, 'verification'):
+            self.prepare()
 
-    def test_bluetooth_helpers_use_native_launcher(self):
+    def test_unsafe_files_are_rejected_without_inspection(self):
+        binary = self.write_binary()
+        target = launcher.TARGETS['x86_64'][0]
+        original = binary.read_bytes()
+        outside = self.root/'outside'
+        outside.write_bytes(original)
+        outside.chmod(0o755)
+        for kind in ('symlink', 'hardlink', 'writable', 'non-executable'):
+            with self.subTest(kind=kind):
+                if binary.exists() or binary.is_symlink():
+                    binary.unlink()
+                if kind == 'symlink':
+                    binary.symlink_to(outside)
+                elif kind == 'hardlink':
+                    os.link(outside, binary)
+                else:
+                    binary.write_bytes(original)
+                    binary.chmod(0o777 if kind == 'writable' else 0o644)
+                self.write_metadata(binary, target)
+                self.inspected.clear()
+                with self.assertRaisesRegex(ValueError, 'verification'):
+                    self.prepare()
+                self.assertFalse(self.inspected)
+
+    def test_fifo_is_rejected_without_blocking(self):
+        binary = self.root/'bin/omarchy-audio-service'
+        binary.parent.mkdir()
+        os.mkfifo(binary)
+        (self.root/'backend-release.json').write_text(json.dumps(dict(
+            buildId=self.source_id(self.root), target=launcher.TARGETS['x86_64'][0],
+            sha256='0'*64)))
+        probe = ('import runpy; from pathlib import Path; '
+                 'module=runpy.run_path('+repr(str(ROOT/'packaging/launch-backend.py'))+'); '
+                 'print(module["matches"](Path('+repr(str(binary))+'), '
+                 '"x86_64-unknown-linux-gnu", 62, "unused", "0"*64, '
+                 'type("T",(),{"inspect":staticmethod(lambda _: {})})()))')
+        result = run_process([sys.executable, '-c', probe], capture_output=True,
+                             text=True, timeout=2, check=True)
+        self.assertEqual(result.stdout.strip(), 'False')
+
+    def test_missing_or_malformed_metadata_fails_closed(self):
+        self.write_binary()
+        metadata = self.root/'backend-release.json'
+        for content in (None, '', '{}', '[]', '{broken'):
+            with self.subTest(content=content):
+                if content is None:
+                    metadata.unlink(missing_ok=True)
+                else:
+                    metadata.write_text(content)
+                with self.assertRaisesRegex(ValueError, 'metadata'):
+                    self.prepare()
+
+    def test_launcher_contains_no_build_download_or_replacement_path(self):
+        source = (ROOT/'packaging/launch-backend.py').read_text()
+        for forbidden in ('cargo build', 'cargo fetch', 'urlopen(', 'requests.',
+                          'shutil.copy', 'os.replace(', 'NamedTemporaryFile'):
+            self.assertNotIn(forbidden, source)
+
+    def test_bluetooth_helpers_use_reviewed_native_launcher(self):
         scripts = self.root/'scripts'
         scripts.mkdir()
-        for name in ('audio-bluetooth-default-compat', 'audio-output-set-default', 'audio-input-set-default'):
+        for name in ('audio-bluetooth-default-compat', 'audio-output-set-default',
+                     'audio-input-set-default'):
             helper = scripts/name
             helper.write_bytes((ROOT/'scripts'/name).read_bytes())
             helper.chmod(0o755)
-        # A foreign bundled ELF must never be executed, even by compatibility
-        # helpers after the UI has already prepared its cached native backend.
-        self.write_binary(self.root/'bin/omarchy-audio-service', 'x86_64')
         native_launcher = scripts/'audio-service'
         native_launcher.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$AUDIO_NATIVE_ARGUMENTS"\n')
         native_launcher.chmod(0o755)
@@ -120,143 +181,12 @@ class NativeBackendTests(unittest.TestCase):
                 self.assertEqual(json.loads(params), dict(direction=direction, id=42,
                     name='Endpoint with spaces', previous='Previous endpoint'))
 
-    def test_plugin_update_rebuilds_for_the_new_identity(self):
-        old = self.prepare()
-        self.source.write_text('release two with changed QML')
-        new = self.prepare()
-        self.assertNotEqual(old, new)
-        self.assertTrue(old.exists())
-        self.assertEqual(self.cargo.call_count, 2)
-        self.assertEqual(self.inspect(new)['buildId'], self.source_id(self.root))
-
-    def test_corrupt_cache_is_rebuilt(self):
-        binary = self.prepare()
-        binary.write_bytes(b'broken')
-        self.assertEqual(self.prepare(), binary)
-        self.assertEqual(self.cargo.call_count, 2)
-
-    def test_fifo_binary_is_rejected_without_blocking(self):
-        binary = self.root/'fifo-backend'
-        os.mkfifo(binary)
-        probe = ('import runpy; from pathlib import Path; '
-                 'launcher = runpy.run_path('+repr(str(ROOT/'packaging/launch-backend.py'))+'); '
-                 'print(launcher["matches"](Path('+repr(str(binary))+'), '
-                 '"x86_64-unknown-linux-gnu", 62, "unused", None))')
-        result = run_process([sys.executable, '-c', probe],
-                             capture_output=True, text=True, timeout=2, check=True)
-        self.assertEqual(result.stdout.strip(), 'False')
-
-    def test_writable_cache_directories_are_rejected_before_inspection(self):
-        binary = self.prepare()
-        original = binary.read_bytes()
-        for directory in (self.cache, binary.parents[2], binary.parents[1], binary.parent):
-            with self.subTest(directory=directory):
-                directory.chmod(0o777)
-                self.inspected.clear()
-                try:
-                    with self.assertRaisesRegex(ValueError, 'cache'):
-                        self.prepare()
-                    self.assertFalse(self.inspected)
-                    self.assertEqual(binary.read_bytes(), original)
-                finally:
-                    directory.chmod(0o700)
-
-    def test_redirected_cache_directory_is_rejected_before_inspection(self):
-        binary = self.prepare()
-        directory = binary.parent.parent
-        outside = self.root/'outside-cache'
-        directory.rename(outside)
-        directory.symlink_to(outside, target_is_directory=True)
+    def test_unsupported_cpu_is_rejected_before_inspection(self):
+        self.write_binary()
         self.inspected.clear()
-        with self.assertRaisesRegex(ValueError, 'cache'):
-            self.prepare()
-        self.assertFalse(self.inspected)
-
-    def test_unsafe_cached_binaries_are_replaced_without_executing_them(self):
-        binary = self.prepare()
-        for kind in ('symlink', 'hardlink', 'writable'):
-            with self.subTest(kind=kind):
-                outside = self.root/('outside-'+kind)
-                outside.write_bytes(binary.read_bytes())
-                outside.chmod(0o755)
-                original = outside.read_bytes()
-                if kind == 'symlink':
-                    binary.unlink()
-                    binary.symlink_to(outside)
-                elif kind == 'hardlink':
-                    binary.unlink()
-                    os.link(outside, binary)
-                else:
-                    binary.chmod(0o777)
-                self.inspected.clear()
-                self.cargo.reset_mock()
-                self.assertEqual(self.prepare(), binary)
-                self.assertEqual(self.cargo.call_count, 1)
-                self.assertNotIn(binary, self.inspected)
-                self.assertFalse(binary.is_symlink())
-                self.assertEqual(binary.stat().st_nlink, 1)
-                self.assertEqual(binary.stat().st_mode & 0o022, 0)
-                self.assertEqual(outside.read_bytes(), original)
-
-    def test_symlinked_cache_home_is_supported(self):
-        binary = self.prepare()
-        target = self.root/'real-cache'
-        self.cache.rename(target)
-        self.cache.symlink_to(target, target_is_directory=True)
-        self.assertEqual(self.prepare().resolve(), binary.resolve())
-        self.assertEqual(self.cargo.call_count, 1)
-
-    def test_unsafe_cargo_target_is_rejected_before_building(self):
-        binary = self.prepare()
-        binary.write_bytes(b'broken')
-        directory = binary.parent.parent/'target'
-        directory.chmod(0o777)
-        self.cargo.reset_mock()
-        with self.assertRaisesRegex(ValueError, 'cache'):
-            self.prepare()
-        self.cargo.assert_not_called()
-        directory.chmod(0o700)
-        outside = self.root/'outside-target'
-        directory.rename(outside)
-        directory.symlink_to(outside, target_is_directory=True)
-        with self.assertRaisesRegex(ValueError, 'cache'):
-            self.prepare()
-        self.cargo.assert_not_called()
-
-    def test_malformed_build_info_is_rejected(self):
-        binary = self.root/'bin/omarchy-audio-service'
-        self.write_binary(binary, 'x86_64')
-        for value in (None, [], 'invalid'):
-            with self.subTest(value=value), patch.object(self.tools, 'inspect', return_value=value):
-                self.assertFalse(launcher.matches(binary, 'x86_64-unknown-linux-gnu',
-                                                   62, self.source_id(self.root), self.tools))
-
-    def test_failed_build_publishes_no_executable(self):
-        self.cargo.side_effect = subprocess.CalledProcessError(1, ['cargo'])
-        with self.assertRaises(subprocess.CalledProcessError):
-            self.prepare()
-        self.assertFalse(list(self.cache.glob('**/'+self.source_id(self.root)+'/omarchy-audio-service')))
-
-    def test_missing_compiler_has_an_actionable_error(self):
-        with patch.object(launcher.shutil, 'which', return_value=None):
-            with self.assertRaisesRegex(ValueError, 'Install Rust/Cargo'):
-                self.prepare()
-
-    def test_update_during_build_is_not_published(self):
-        build_id = self.source_id(self.root)
-        def update(command, **kwargs):
-            result = self.compile(command, **kwargs)
-            self.source.write_text('updated during cargo build')
-            return result
-        self.cargo.side_effect = update
-        with self.assertRaisesRegex(ValueError, 'updated while building'):
-            self.prepare()
-        self.assertFalse(list(self.cache.glob('**/'+build_id+'/omarchy-audio-service')))
-
-    def test_unsupported_cpu_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'Unsupported audio backend platform'):
             self.prepare('riscv64')
-        self.cargo.assert_not_called()
+        self.assertFalse(self.inspected)
 
 
 if __name__ == '__main__':

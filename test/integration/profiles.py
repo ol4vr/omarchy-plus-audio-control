@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Profile changes against a private SPA device that recreates its endpoints."""
 import json
+import fcntl
 import os
 from pathlib import Path
 import shlex
@@ -9,7 +10,7 @@ import sys
 import tempfile
 import time
 
-from client import Client
+from client import Client, prepare_ptt_authority
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = Path(sys.argv[1]).resolve()
@@ -34,6 +35,7 @@ with tempfile.TemporaryDirectory(prefix='audio-profiles-') as temporary:
                PIPEWIRE_REMOTE='audio-test', XDG_CONFIG_HOME=str(work/'config'),
                XDG_STATE_HOME=str(work/'state'), XDG_CACHE_HOME=str(work/'cache'),
                AUDIO_CONTROL_PRIVATE_RUNTIME_DIR=temporary, PULSE_SERVER='unix:'+str(work/'pulse'))
+    ptt_state, ptt_authority = prepare_ptt_authority(env)
     for key in ('OMARCHY_AUDIO_HELPERS_DIR', 'OMARCHY_AUDIO_CONTROL_FILE',
                 'OMARCHY_AUDIO_PREFERENCES_FILE', 'OMARCHY_AUDIO_RULES_FILE', 'OMARCHY_AUDIO_SCENES_FILE'):
         env.pop(key, None)
@@ -83,6 +85,18 @@ with tempfile.TemporaryDirectory(prefix='audio-profiles-') as temporary:
                             return False
                     return True
                 client.wait_state(matches)
+
+            marker = ptt_state/'enabled'
+            profile_writes = (work/'log').read_text().count('PROFILE ')
+            with (ptt_authority/'authority.lock').open('a+') as authority:
+                fcntl.flock(authority, fcntl.LOCK_EX)
+                marker.write_bytes(b'')
+                marker.chmod(0o600)
+            change('headset', 'ptt_owned')
+            assert (work/'log').read_text().count('PROFILE ') == profile_writes
+            with (ptt_authority/'authority.lock').open('a+') as authority:
+                fcntl.flock(authority, fcntl.LOCK_EX)
+                marker.unlink()
 
             before = (work/'log').read_text()
             change('HiFi')

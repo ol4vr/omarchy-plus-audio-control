@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 
-from client import Client
+from client import Client, prepare_ptt_authority
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT/'backend/target/debug/omarchy-audio-service'
@@ -36,6 +36,7 @@ with tempfile.TemporaryDirectory(prefix='audio-routes-') as temporary:
                PIPEWIRE_REMOTE='audio-test', XDG_CONFIG_HOME=str(work/'config'),
                XDG_STATE_HOME=str(work/'state'), XDG_CACHE_HOME=str(work/'cache'),
                AUDIO_CONTROL_PRIVATE_RUNTIME_DIR=temporary, PULSE_SERVER='unix:'+str(work/'pulse'))
+    prepare_ptt_authority(env)
     for key in ('OMARCHY_AUDIO_HELPERS_DIR', 'OMARCHY_AUDIO_CONTROL_FILE',
                 'OMARCHY_AUDIO_PREFERENCES_FILE', 'OMARCHY_AUDIO_RULES_FILE', 'OMARCHY_AUDIO_SCENES_FILE'):
         env.pop(key, None)

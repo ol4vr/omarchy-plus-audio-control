@@ -35,6 +35,7 @@ impl Service {
             .ok_or_else(|| Failure::new("disconnected", "Native audio is unavailable"))?;
         let _transaction = self.transaction().await?;
         let _external_lock = FileLock::mutation().await?;
+        let _ptt = crate::ptt::require_input_mutation().await?;
         self.set_busy_for(true, "profile.set");
         let _busy = Busy(self);
         let result = crate::profiles::select(
@@ -62,6 +63,18 @@ impl Service {
             .ok_or_else(|| Failure::new("disconnected", "Native audio is unavailable"))?;
         let _transaction = self.transaction().await?;
         let _external_lock = FileLock::mutation().await?;
+        let graph = native.snapshot();
+        let node = native::validate_identity(&graph, &params.identity)?;
+        let _ptt = if crate::ptt::input_node(
+            node.properties
+                .get("media.class")
+                .map(String::as_str)
+                .unwrap_or(""),
+        ) {
+            Some(crate::ptt::require_input_mutation().await?)
+        } else {
+            None
+        };
         self.set_busy_for(true, "port.set");
         let _busy = Busy(self);
         native.select_port(params.identity, &params.port).await?;
@@ -165,6 +178,16 @@ impl Service {
             ));
         }
         let _external_lock = FileLock::mutation().await?;
+        let _ptt = if crate::ptt::input_node(
+            node.properties
+                .get("media.class")
+                .map(String::as_str)
+                .unwrap_or(""),
+        ) {
+            Some(crate::ptt::require_input_mutation().await?)
+        } else {
+            None
+        };
         native.patch(params.identity, params.patch).await?;
         Ok(json!({"outcome": "applied"}))
     }
@@ -186,6 +209,11 @@ impl Service {
             .ok_or_else(|| Failure::new("disconnected", "Native audio is unavailable"))?;
         let _transaction = self.transaction().await?;
         let _lock = FileLock::mutation().await?;
+        let _ptt = if request.method == "scene.apply" {
+            Some(crate::ptt::require_input_mutation().await?)
+        } else {
+            None
+        };
         self.set_busy(true);
         let _busy = Busy(self);
         let overdrive = self.state.borrow()["stores"]["settings"]["outputOverdrive"] == true;

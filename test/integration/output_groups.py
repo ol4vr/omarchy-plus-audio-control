@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 
-from client import Client
+from client import Client, prepare_ptt_authority
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = Path(sys.argv[1]).resolve()
@@ -51,6 +51,7 @@ with tempfile.TemporaryDirectory(prefix='audio-groups-') as temporary, ExitStack
                DBUS_SESSION_BUS_ADDRESS='unix:path='+str(work/'bus'),
                DBUS_SYSTEM_BUS_ADDRESS='unix:path='+str(work/'bus'),
                WIREPLUMBER_CONFIG_DIR='/usr/share/wireplumber')
+    prepare_ptt_authority(env)
     bus = work/'bus.conf'
     bus.write_text('<busconfig><type>session</type><listen>unix:path='+str(work/'bus')+'</listen>'
         '<auth>EXTERNAL</auth><policy context="default"><allow send_destination="*"/>'
@@ -328,7 +329,7 @@ with tempfile.TemporaryDirectory(prefix='audio-groups-') as temporary, ExitStack
         orphan_name = 'omarchy_audio_group_'+orphan_id
         run('pactl', 'load-module', 'module-combine-sink', 'sink_name='+orphan_name,
             'sinks=audio_test_left,audio_test_right',
-            'sink_properties=device.description=Omarchy_Output_Group application.id=ssupt.audio-control '
+            'sink_properties=device.description=Omarchy_Output_Group application.id=io.github.ol4vr.audio-control '
             'node.virtual=true omarchy.audio.group.id='+orphan_id, 'latency_compensate=true')
         until(lambda: all(s['name'] != orphan_name for s in sinks()))
         assert json.loads(rules_path.read_text())['outputGroups'] == []

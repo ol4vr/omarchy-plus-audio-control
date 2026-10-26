@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "builtAt": "2026-10-26T00:34:50Z",
+  "target": "x86_64-unknown-linux-gnu",
+  "upstreamCommit": "c822e48fa3b0d8f3cc2f0bf96eace416f30f0764",
+  "upstreamTree": "baae455c1b33a4b62b24e513dbe850b9cce99c92",
+  "sourceBuildId": "ee594eb9bad2fea1be5714af52afb149a21a76a37ac814f037f7aa7600c9de69",
+  "rustc": "rustc 1.85.1 (4eb161250 2025-03-15)",
+  "cargo": "cargo 1.85.1 (d73d2caf9 2024-12-31)",
+  "rustupInitSha256": "5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4",
+  "cargoLockSha256": "6d2b8501526b5a583541fd74ad960d21d5d242fad6e047ea5573def423c39dc2",
+  "buildCommand": "cargo build --locked --release --manifest-path backend/Cargo.toml",
+  "pipewireDevelopmentVersion": "1.6.8",
+  "libpulseDevelopmentVersion": "17.0-98-gb096",
+  "binary": "bin/omarchy-audio-service",
+  "binarySha256": "e45a8c9c4b0bf06ce8d8cac8257a1b36af1bba149a4de148c73b5a06adeb0d92",
+  "rustSec": {
+    "cargoAuditVersion": "0.22.1",
+    "databaseCommit": "21d909e4c8bd4e14c7aea58bf980c881a0053ab1",
+    "lockedDependencies": 85,
+    "vulnerabilities": 0,
+    "warnings": 0
+  }
+}

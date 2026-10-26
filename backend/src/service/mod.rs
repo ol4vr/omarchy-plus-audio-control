@@ -152,7 +152,7 @@ impl Service {
                     "buildId": crate::launch::BUILD_ID, "pid": std::process::id(),
                     "transport": "jsonl-ascii",
                     "capabilities": [
-                        "health", "state.subscribe", "node.audio", "node.level",
+                        "health", "state.subscribe", "ptt.status", "node.audio", "node.level",
                         "store.read", "settings.set", "preferences.default", "preferences.profile",
                         "rules.set_app", "rules.delete_app", "devices.alias", "devices.flag", "devices.forget",
                         "scenes.save", "scenes.delete", "scene.apply", "scene.capture",
@@ -168,6 +168,15 @@ impl Service {
             "state.subscribe" => {
                 request.params::<NoParams>()?;
                 Ok(json!({"subscribed": true, "epoch": self.epoch}))
+            }
+            "ptt.status" => {
+                request.params::<NoParams>()?;
+                let authority = crate::ptt::status().await?;
+                let state = match authority.state() {
+                    crate::ptt::State::Disabled => "disabled",
+                    crate::ptt::State::Enabled => "enabled",
+                };
+                Ok(json!({"state": state}))
             }
             "node.audio" | "node.level" => self.audio_request(request).await,
             "microphone.start" => self.start_microphone(request).await,

@@ -53,10 +53,10 @@ impl Watcher {
                 return Err(io::Error::last_os_error());
             }
         }
-        Ok(Self {
-            fd: AsyncFd::new(fd)?,
-            names,
-        })
+        // SAFETY: OwnedFd is the sole owner of this descriptor. It remains
+        // open and cannot change for the complete AsyncFd lifetime.
+        let fd = unsafe { AsyncFd::register(fd)? };
+        Ok(Self { fd, names })
     }
     pub async fn changed(&self) -> io::Result<()> {
         let mut buffer = [0u8; 16384];

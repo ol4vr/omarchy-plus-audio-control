@@ -84,7 +84,7 @@ ShellRoot {
             "Advanced window and menu did not open")) return
         // A stale proxy flag must not close the mixer that is replacing it.
         root.advanced.quickPanelProxyOpen = true
-        testBar.summonBarWidget("ssupt.audio-control")
+        testBar.summonBarWidget("io.github.ol4vr.audio-control")
       } else if (root.phase === 2) {
         if (!root.check(root.mixerOpen && !root.advanced.opened
             && !root.dropdown.popupOpen && root.advanced.profileMenuCount === 0

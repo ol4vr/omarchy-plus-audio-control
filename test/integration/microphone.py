@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 
-from client import Client
+from client import Client, prepare_ptt_authority
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = Path(sys.argv[1]).resolve()
@@ -50,6 +50,7 @@ with tempfile.TemporaryDirectory(prefix='audio-microphone-') as temporary:
                DBUS_SESSION_BUS_ADDRESS='unix:path='+str(work/'bus'),
                DBUS_SYSTEM_BUS_ADDRESS='unix:path='+str(work/'bus'),
                WIREPLUMBER_CONFIG_DIR='/usr/share/wireplumber')
+    prepare_ptt_authority(env)
     bus = work/'bus.conf'
     bus.write_text('<busconfig><type>session</type><listen>unix:path='+str(work/'bus')+'</listen>'
                    '<auth>EXTERNAL</auth><policy context="default"><allow send_destination="*"/>'
@@ -84,7 +85,7 @@ with tempfile.TemporaryDirectory(prefix='audio-microphone-') as temporary:
 
     def test_stream(direction):
         return next((item for item in nodes()
-                     if item['info']['props'].get('application.id') == 'ssupt.audio-control'
+                     if item['info']['props'].get('application.id') == 'io.github.ol4vr.audio-control'
                      and item['info']['props'].get('media.class') == 'Stream/'+direction+'/Audio'
                      and item['info']['state'] == 'running'), None)
 
@@ -133,7 +134,7 @@ with tempfile.TemporaryDirectory(prefix='audio-microphone-') as temporary:
             return True
         until(clip_is_gone, timeout=2)
         if connected:
-            assert not any(n['info']['props'].get('application.id') == 'ssupt.audio-control' for n in nodes())
+            assert not any(n['info']['props'].get('application.id') == 'io.github.ol4vr.audio-control' for n in nodes())
         else:
             observer.wait_state(lambda s: not s['connected'])
         return state

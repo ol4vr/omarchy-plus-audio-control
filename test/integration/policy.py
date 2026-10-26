@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Native settings against private WirePlumber, including saved-state reload."""
 from contextlib import ExitStack
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -9,7 +10,7 @@ import sys
 import tempfile
 import time
 
-from client import Client
+from client import Client, prepare_ptt_authority
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = Path(sys.argv[1]).resolve()
@@ -19,6 +20,12 @@ def stop(process):
     if process.poll() is None:
         process.terminate()
         process.wait(timeout=5)
+
+
+def policy_matches(state, key, expected):
+    actual = state.get('policies', {}).get(key)
+    return (isinstance(expected, float) and isinstance(actual, (int, float))
+            and abs(actual-expected) < .000001) or actual == expected
 
 
 with tempfile.TemporaryDirectory(prefix='audio-policy-') as temporary, ExitStack() as cleanup:
@@ -32,6 +39,7 @@ with tempfile.TemporaryDirectory(prefix='audio-policy-') as temporary, ExitStack
                DBUS_SESSION_BUS_ADDRESS='unix:path='+str(work/'bus'),
                DBUS_SYSTEM_BUS_ADDRESS='unix:path='+str(work/'bus'),
                WIREPLUMBER_CONFIG_DIR='/usr/share/wireplumber')
+    prepare_ptt_authority(env)
     bus = work/'bus.conf'
     bus.write_text('<busconfig><type>session</type><listen>unix:path='+str(work/'bus')+'</listen>'
         '<auth>EXTERNAL</auth><policy context="default"><allow send_destination="*"/>'
@@ -76,10 +84,23 @@ with tempfile.TemporaryDirectory(prefix='audio-policy-') as temporary, ExitStack
         generation = state['generation']
         mono = 'node.features.audio.mono'
         volume = 'device.routes.default-sink-volume'
+        source_volume = 'device.routes.default-source-volume'
         autoswitch = 'bluetooth.autoswitch-to-headset-profile'
         preference = 'bluetooth.profile-preference'
         assert state['policies'][mono] is False
         assert abs(state['policies'][volume]-.4) < .000001
+
+        # Verify the WirePlumber-supported persistence path independently of
+        # this backend. A successful wpctl exit is not sufficient: require
+        # both the live and saved metadata to contain the intended value.
+        output = run('wpctl', 'settings', '--save', autoswitch, 'false')
+        assert "Updated and saved setting" in output
+        state = client.wait_state(lambda s: s.get('policies', {}).get(autoswitch) is False and
+            s.get('metadata', {}).get('persistent-sm-settings', {}).get('0:'+autoswitch, {}).get('value') == 'false')
+        output = run('wpctl', 'settings', '--save', autoswitch, 'true')
+        assert "Updated and saved setting" in output
+        state = client.wait_state(lambda s: s.get('policies', {}).get(autoswitch) is True and
+            s.get('metadata', {}).get('persistent-sm-settings', {}).get('0:'+autoswitch, {}).get('value') == 'true')
 
         def change(key, value):
             return client.request('policy.set', dict(generation=generation, key=key, value=value))
@@ -87,11 +108,28 @@ with tempfile.TemporaryDirectory(prefix='audio-policy-') as temporary, ExitStack
         expected = {mono: True, volume: .5, autoswitch: False, preference: 'latency'}
         for key, value in expected.items():
             assert change(key, value)['outcome'] == 'applied'
-            state = client.wait_state(lambda s: s.get('policies', {}).get(key) == value and
+            state = client.wait_state(lambda s: policy_matches(s, key, value) and
                 s.get('metadata', {}).get('persistent-sm-settings', {}).get('0:'+key, {}).get('value') == json.dumps(.125 if key == volume else value))
             raw = state['metadata']['persistent-sm-settings']['0:'+key]['value']
             assert json.loads(raw) == (.125 if key == volume else value)
             assert not state['busy']
+        marker = Path(env['XDG_STATE_HOME'])/'omarchy-plus/discord-ptt/enabled'
+        with (Path(env['XDG_RUNTIME_DIR'])/'omarchy-plus-discord-ptt/authority.lock').open('a+') as authority:
+            fcntl.flock(authority, fcntl.LOCK_EX)
+            marker.write_bytes(b'')
+            marker.chmod(0o600)
+        assert client.request('ptt.status')['state'] == 'enabled'
+        assert change(volume, .6)['outcome'] == 'applied'
+        state = client.wait_state(lambda s: abs(s.get('policies', {}).get(volume, -1)-.6) < .000001 and
+            s.get('metadata', {}).get('persistent-sm-settings', {}).get('0:'+volume, {}).get('value') == '0.216')
+        for key, value in ((source_volume, .6), (autoswitch, True), (preference, 'quality')):
+            reply = client.response(client.send('policy.set',
+                dict(generation=generation, key=key, value=value)))
+            assert reply['error']['code'] == 'ptt_owned', reply
+        with (Path(env['XDG_RUNTIME_DIR'])/'omarchy-plus-discord-ptt/authority.lock').open('a+') as authority:
+            fcntl.flock(authority, fcntl.LOCK_EX)
+            marker.unlink()
+        assert client.request('ptt.status')['state'] == 'disabled'
         before = state['metadata']['persistent-sm-settings']
         for key, value in [(volume, 1.5), (volume, -.1), (mono, 'true'),
                            (preference, 'invalid'), ('unknown.audio.setting', True)]:
@@ -111,12 +149,12 @@ with tempfile.TemporaryDirectory(prefix='audio-policy-') as temporary, ExitStack
         run('pw-metadata', '-n', 'sm-settings', '0', volume, '0.027', 'Spa:String:JSON')
         client.wait_state(lambda s: abs(s.get('policies', {}).get(volume, -1)-.3) < .000001)
         change(volume, .5)
-        client.wait_state(lambda s: s.get('policies', {}).get(volume) == .5)
+        client.wait_state(lambda s: abs(s.get('policies', {}).get(volume, -1)-.5) < .000001)
         # Deny writes only to saved settings: the live half can change, but
         # the service must restore it and report failure instead of success.
         objects = json.loads(run('pw-dump'))
         backend_client = next(o['id'] for o in objects if o['type'] == 'PipeWire:Interface:Client'
-            and o.get('info', {}).get('props', {}).get('application.id') == 'ssupt.audio-control')
+            and o.get('info', {}).get('props', {}).get('application.id') == 'io.github.ol4vr.audio-control')
         persistent = next(o['id'] for o in objects if o['type'] == 'PipeWire:Interface:Metadata'
             and o.get('props', {}).get('metadata.name') == 'persistent-sm-settings')
         run('pw-cli', 'permissions', str(backend_client), str(persistent), '0500')
@@ -134,7 +172,7 @@ with tempfile.TemporaryDirectory(prefix='audio-policy-') as temporary, ExitStack
         assert reply['error']['code'] == 'unsupported', reply
         wp = launch(['wireplumber', '--profile', 'policy'])
         expected[preference] = 'quality'
-        state = client.wait_state(lambda s: all(s.get('policies', {}).get(k) == v for k, v in expected.items()))
+        state = client.wait_state(lambda s: all(policy_matches(s, k, v) for k, v in expected.items()))
         assert state['generation'] == generation, 'WirePlumber restart should not require a PipeWire restart'
         # Malformed or missing capabilities are hidden and cannot be recreated.
         run('pw-metadata', '-n', 'sm-settings', '0', mono, 'invalid', 'Spa:String:JSON')

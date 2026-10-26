@@ -77,6 +77,7 @@ impl Service {
             .clone()
             .try_lock_owned()
             .map_err(|_| Failure::new("busy", "Another audio operation is active"))?;
+        let ptt = crate::ptt::require_input_mutation().await?;
         let mut session = self.microphone.lock().await;
         if session.cancel.is_some() {
             return Err(Failure::new("busy", "A microphone test is active"));
@@ -128,6 +129,7 @@ impl Service {
         tokio::spawn(async move {
             let _transaction = transaction;
             let _lock = lock;
+            let _ptt = ptt;
             let _busy = Busy(&service);
             let result =
                 microphone::run(params.record, &native, params.identity, clip, receiver).await;
